@@ -1,6 +1,6 @@
 import websocket
 import json
-import numpy
+import numpy as np
 import talib
 import pprint
 from binance.client import Client
@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 from mplfinance.original_flavor import candlestick_ohlc
 import matplotlib.dates as mpl_dates
 
+
+
 RSI_PERİOD = 14
 OVERSOLD_TRESHOLD = 30
 OVERBOUGHT_TRESHOLD = 70
@@ -20,6 +22,7 @@ TRADE_SYMBOL = "TVKBUSD"
 SOCKET = "wss://stream.binance.com:9443/ws/tvkbusd@kline_1m"
 client = Client(config.API_KEY,config.API_SECRET)
 
+closes = []
 
 def on_open(ws):
     print("open")
@@ -28,8 +31,7 @@ def on_close(ws):
     print("close")
 
 def on_message(ws,message):
-    print("message")
-    # print(message,ws)
+    global closes
     message = json.loads(message)
     candle = message["k"]
     is_candle_closed = candle["x"]
@@ -38,12 +40,19 @@ def on_message(ws,message):
         print("-"*30 + message['s'] + "-"*30)
         
         acilis_zamani = int_to_time(candle['t'])
+        close = candle["c"]
         print(f"Açılış zamanı: {acilis_zamani}")
         print(f"Açılış değeri: {candle['o']}")
-        print(f"Kapanış değeri: {candle['c']}")
+        print(f"Kapanış değeri: {close}")
         print(f"En yüksek değer: {candle['h']}")
         print(f"En düşük değer: {candle['l']}")
 
+        closes.append(float(close))
+        print(len(closes))
+        if len(closes) > RSI_PERİOD:
+            np_closes = np.array(closes)
+            rsi = talib.RSI(np_closes,RSI_PERİOD)
+            print(rsi)
 
 ws = websocket.WebSocketApp(SOCKET,on_open=on_open, on_close=on_close, on_message=on_message)
 ws.run_forever()
@@ -76,4 +85,3 @@ def visualize_data(candle_df):
 # candles = client.get_klines(symbol='BTCUSDT',interval="30m")
 # df = candles_to_df(candles)
 # visualize_data(df)
-
