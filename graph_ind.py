@@ -48,5 +48,12 @@ gi = {
 
         },
 
+    "tripleMA":{
+
+        "name":"Triple-MA-Forecast",
+        "type":"İndikatörü"
+
+        },
+
 
 }
