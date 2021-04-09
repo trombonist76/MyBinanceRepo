@@ -12,9 +12,9 @@ import plotly.express as px
 import math
 from recognizing import recognize_candlestick
 from graph_ind import gi
-import requests
 from pprint import pprint
 import time
+import requests
 
 RSI_PERİOD = 14
 OVERSOLD_TRESHOLD = 30
@@ -36,20 +36,400 @@ def progressbar():
         time.sleep(0.1)
 
     '...and now we\'re done!'
+class ExploreMarket():
+    def __init__(self,time_scale):
+        self.client = Client(config.API_KEY, config.API_SECRET)
+        self.time_scale = time_scale
+
+    @staticmethod
+    def candles_to_df(candles):
+        candle_df = pd.DataFrame(candles)
+        candle_df.columns = ["AcilisZamani", "Acilis", "EnYuksek", "EnDusuk", "Kapanis", "Volume", "KapanisZamani",
+                             "QuoteAssetVolume", "NumberOfTrades", "TakerBuyBaseAssetVolume", "TakerBuyQuoteAssetVolume", "Ignore"]
+        return candle_df
+
+    def candles(self, trade_symbol=None):
+        if trade_symbol:
+            candless = self.client.get_klines(
+                symbol=trade_symbol, interval=self.time_scale)
+            return candless
+
+        else:
+            candless = self.client.get_klines(
+                symbol=self.TRADE_SYMBOL, interval=self.time_scale)
+            return candless
+
+    def get_candle_data(self, last_price=False, testing_number: int = -1, df=None):
+
+        if df is not None:
+            close = df["Kapanis"].values[:testing_number].astype(np.float64)
+            high = df["EnYuksek"].values[:testing_number].astype(np.float64)
+            low = df["EnDusuk"].values[:testing_number].astype(np.float64)
+            acilis = df["Acilis"].values[:testing_number].astype(np.float64)
+            if testing_number != -1:
+                self.tarih = df["AcilisZamani"].apply(
+                    lambda x: datetime.fromtimestamp(x / 1e3)).values[:testing_number+1]
+            if testing_number == -1:
+
+                tarih = df["AcilisZamani"].apply(
+                    lambda x: datetime.fromtimestamp(x / 1e3))[:-1]
+
+            return tarih, acilis, close, high, low
+
+        else:
+            df = self.candles_to_df(self.candles())
+            if last_price:
+                return float(df["Kapanis"].values[:testing_number][-1])
+
+            else:
+                self.close = df["Kapanis"].values[:testing_number].astype(
+                    np.float64)
+                self.high = df["EnYuksek"].values[:testing_number].astype(
+                    np.float64)
+                self.low = df["EnDusuk"].values[:testing_number].astype(
+                    np.float64)
+                self.acilis = df["Acilis"].values[:testing_number].astype(
+                    np.float64)
+                if testing_number != -1:
+                    self.tarih = df["AcilisZamani"].apply(
+                        lambda x: datetime.fromtimestamp(x / 1e3)).values[:testing_number+1]
+                if testing_number == -1:
+
+                    self.tarih = df["AcilisZamani"].apply(
+                        lambda x: datetime.fromtimestamp(x / 1e3))[:-1]
+
+                return self.tarih, self.acilis, self.close, self.high, self.low
+
+    @property
+    def get_supertrend(self):
+
+        atr_period, atr_multiplier = 10, 2
+        try:
+            atr = talib.ATR(self.high, self.low, self.close, atr_period)
+        except:
+            return False, False
+
+        previous_final_upperband = 0
+        previous_final_lowerband = 0
+        final_upperband = 0
+        final_lowerband = 0
+        previous_close = 0
+        previous_supertrend = 0
+        supertrend = []
+        supertrendc = 0
+
+        for i in range(0, len(self.close)):
+            if np.isnan(self.close[i]):
+                pass
+            else:
+                highc = self.high[i]
+                lowc = self.low[i]
+                atrc = atr[i]
+                closec = self.close[i]
+
+                if math.isnan(atrc):
+                    atrc = 0
+
+                basic_upperband = (highc + lowc) / 2 + atr_multiplier * atrc
+                basic_lowerband = (highc + lowc) / 2 - atr_multiplier * atrc
+
+                if basic_upperband < previous_final_upperband or previous_close > previous_final_upperband:
+                    final_upperband = basic_upperband
+                else:
+                    final_upperband = previous_final_upperband
+
+                if basic_lowerband > previous_final_lowerband or previous_close < previous_final_lowerband:
+                    final_lowerband = basic_lowerband
+                else:
+                    final_lowerband = previous_final_lowerband
+
+                if previous_supertrend == previous_final_upperband and closec <= final_upperband:
+                    supertrendc = final_upperband
+                else:
+                    if previous_supertrend == previous_final_upperband and closec >= final_upperband:
+                        supertrendc = final_lowerband
+                    else:
+                        if previous_supertrend == previous_final_lowerband and closec >= final_lowerband:
+                            supertrendc = final_lowerband
+                        elif previous_supertrend == previous_final_lowerband and closec <= final_lowerband:
+                            supertrendc = final_upperband
+
+                supertrend.append(supertrendc)
+
+                previous_close = closec
+
+                previous_final_upperband = final_upperband
+
+                previous_final_lowerband = final_lowerband
+
+                previous_supertrend = supertrendc
+
+        return supertrend
+
+    @property
+    def get_rsi(self):
+        rsi = talib.RSI(self.close, RSI_PERİOD)
+        return rsi
+
+    @property
+    def get_stokrsi(self):
+        rsi = self.get_rsi(self.close)
+        stochrsif, stochrsis = talib.STOCH(
+            rsi, rsi, rsi, fastk_period=14, slowk_period=3, slowd_period=3)
+        return stochrsif, stochrsis
+
+    @property
+    def get_bband(self):
+        uband, mband, lband = talib.BBANDS(self.close)
+        return uband, mband, lband
+
+    @property
+    def get_ema(self):
+        # ema = talib.EMA(self.close)
+        ema = talib.EMA(self.close)
+        return ema
+
+    @property
+    def get_macd(self):
+        macd, macdsignal, macdhist = talib.MACD(
+            self.close, fastperiod=12, slowperiod=26, signalperiod=9)
+        return macd, macdsignal, macdhist
+
+    property
+    def get_triple_ma(self):
+        seventeen = talib.MA(self.close, 17)
+        fifty = talib.MA(self.close, 50)
+        hundred = talib.MA(self.close, 200)
+        return seventeen, fifty, hundred
+
+    def signals(self, indicator_name):
+        """
+        ! RETURN 1 al sinyali
+        ! RETURN 2 sat sinyali
+        ! RETURN False hiçbirşey yapma sinyali
+        ! Closes Golden cross bulmak için kullanılır. Her coinin kapanislari aynı olmadığından dolayı kapanislar dışarıdan verilir.
+        ! print_signal parametresi Golden cross ararken ekrana boş yere sinyal yazılmasın diye konulmuştur.
+
+        """
+        self.control_key_in_gi(indicator_name)
+
+        if indicator_name == "supertrend":
+            super_trend = self.get_supertrend
+            # Trend yeni döndüyse son 3 kapanışta döndüyse
+            # Alım Sinyali
+
+            last_three_period = self.close[-3:]
+            is_signal = False
+            for index, i in enumerate(last_three_period):
+                if -len(last_three_period)+index+1 == 0:
+                    break
+
+                if i < super_trend[-len(last_three_period)+index] and i > super_trend[-len(last_three_period)+index+1]:
+                    is_signal = True
+                    break
+
+            if is_signal:
+                result = 1
+
+            elif super_trend[-2] < self.close[-2] and super_trend[-1] > self.close[-1]:
+                result = 2
+
+            else:
+                result = False
+
+        elif indicator_name == "rsi":
+            last_rsi = self.get_rsi[-1]
+            if last_rsi <= 45:
+                result = 1
+
+            elif last_rsi > 68:
+                result = 2
+
+            else:
+                result = False
+
+        elif indicator_name == "macd":
+            macd, macdsignal, macdhist = self.get_macd
+            last_macd = macd[-1]
+            last_macd_signal = macdsignal[-1]
+
+            previous_macd = macd[-2]
+            previous_macd_signal = macdsignal[-2]
+
+            macd_cross_up = last_macd > last_macd_signal and previous_macd < previous_macd_signal
+            if macd_cross_up:
+                result = 1
+
+            else:
+                result = False
+
+        elif indicator_name == "ema":
+            last_ema = self.get_ema[-1]
+            last_close = self.close[-1]
+
+            if last_close < (last_ema - last_ema * 0.05):
+                result = 1
+
+            elif last_close > (last_ema + last_ema * 0.05):
+                result = 2
+
+            else:
+                result = False
+
+        elif indicator_name == "bband":
+            uband, mband, lband = self.get_bband
+            last_uband = uband[-1]
+            last_lband = lband[-1]
+            last_close = self.close[-1]
+
+            if last_lband > last_close:
+                result = 1
+
+            elif last_uband < last_close:
+                result = 2
+
+            else:
+                result = False
+
+        elif indicator_name == "tripleMA":
+
+
+            seventeen, fifty, hundred2 = self.get_triple_ma()
+            last_seventeen = seventeen[-1]
+            prev_seventeen = seventeen[-2]
+            lastfifty = fifty[-1]
+            previousfifty = fifty[-2]
+            lasthundred2 = hundred2[-1]
+            previoushundred2 = hundred2[-2]
+
+            # MA-50 MA-200 ü keserse
+            # if previousfifty < previoushundred2 and lastfifty > lasthundred2:
+            #     result = 1
+            last_three_period = hundred2[-4:]
+            is_signal = False
+            for index, i in enumerate(last_three_period):
+                if -len(last_three_period)+index+1 == 0:
+                    break
+
+                if i > seventeen[-len(last_three_period)+index] and i < seventeen[-len(last_three_period)+index+1]:
+                    is_signal = True
+                    break
+
+            if is_signal:
+                result = 1
+
+            elif previousfifty > previoushundred2 and lastfifty < lasthundred2:
+                result = 2
+
+            else:
+                result = False
+        return result
+
+    @staticmethod
+    def control_key_in_gi(name):
+        if name in gi.keys():
+            return gi[name]["name"], gi[name]["type"]
+        else:
+            raise KeyError(
+                "Girdiğiniz 'indikatör_name' parametresi 'self.signals' fonksiyonunda bulunmuyor.")
+
+    def find_golden_cross(self, liste=None):
+        if liste is not None:
+            self.coin_list = liste
+            for i in self.coin_list:
+                ohlc = self.candles(trade_symbol=i)
+                df = self.candles_to_df(ohlc)
+                tarih, acilis, close, high, low = self.get_candle_data(df=df)
+                self.get_triple_ma(close=close)
+                result = self.signals("tripleMA", print_signal=False)
+                print(result)
+                if result == 1:
+                    self.TRADE_SYMBOL = i
+            else:
+                print("Golden Cross Bulunamadı")
+        else:
+            # self.coin_list = self.get_all_coins_list()[-500:]
+            self.coin_list = ["UNIUSDT", "TVKBUSD", "SUPERUSDT"]
+
+            for index, i in enumerate(self.coin_list):
+                parites = ["BTC", "ETH", "BNB", "PAX", "SDS",
+                           "SDC", "BRL", "AUD", "GBP", "EUR", "TRY"]
+                if i[-3:] in parites:
+                    continue
+
+                if index % 10 == 0:
+                    time.sleep(5)
+                print(i)
+                try:
+                    ohlc = self.candles(trade_symbol=i)
+                except Exception:
+                    continue
+                df = self.candles_to_df(ohlc)
+                tarih, acilis, close, high, low = self.get_candle_data(df=df)
+                result = self.signals(
+                    "tripleMA", print_signal=False, closes=close)
+                if result == 1:
+                    print(f"Golden Cross Bulundu Symbol: {i}")
+                    self.winners.append(i)
+
+            StreamlitView.is_executed_golden_cross = True
+            print(self.winners)
+            return self.winners
+
+    def get_all_coins_list(self):
+        info = self.client.get_exchange_info()
+        parites = ["BTC", "ETH", "BNB", "PAX", "SDS",
+                   "SDC", "BRL", "AUD", "GBP", "EUR", "TRY", "USD", "NGN", "RUB",]
+        liste = []
+
+        for index,i in enumerate(info["symbols"]):
+            if i["symbol"][-4:] == "BUSD" or i["symbol"][-3:] not in parites:
+                print(i["symbol"])
+                liste.append(i["symbol"])
+
+        return liste
+
+    def is_ok_to_buy(self):
+        rsi = self.signals("rsi")
+        tripleMA = self.signals("tripleMA")
+        bband = self.signals("bband")
+        supertrend = self.signals("supertrend")
+        macd = self.signals("macd")
+
+        liste = [rsi,tripleMA,bband,supertrend,macd]
+        filtered_list = list(filter(lambda x: x==1,liste))
+        return filtered_list
+
+    def analyze_coins(self):
+        will_be_taken = []
+        coins = self.get_all_coins_list()
+        for index,symbol in enumerate(coins):
+            if index % 10 == 0:
+                time.sleep(1)
+
+            st.write(symbol)
+            self.TRADE_SYMBOL = symbol
+            self.get_candle_data()
+            if len(self.is_ok_to_buy()) > 2:
+                will_be_taken.append(symbol)
+
+        return will_be_taken
 
 
 class StreamlitView():
     is_executed_golden_cross = False
 
-    def __init__(self):
+    def __init__(self,time_scale, will_be_taken=None):
         self.TRADE_SYMBOL = "SUPERUSDT"
+        self.time_scale = time_scale
         self.client = Client(config.API_KEY, config.API_SECRET)
         self.get_candle_data()
         self.money = 500
         self.amount = 0
-        self.coin_list = ["TVKBUSD", "SUPERUSDT",
-                          "ETHUSDT", "ALGOUSDT", "SOLUSDT"]
+        self.will_be_taken = will_be_taken
         self.winners = []
+
+
 
     @property
     def get_supertrend(self):
@@ -162,12 +542,12 @@ class StreamlitView():
     def candles(self, trade_symbol=None):
         if trade_symbol:
             candless = self.client.get_klines(
-                symbol=trade_symbol, interval=Client.KLINE_INTERVAL_4HOUR)
+                symbol=trade_symbol, interval=self.time_scale)
             return candless
 
         else:
             candless = self.client.get_klines(
-                symbol=self.TRADE_SYMBOL, interval=Client.KLINE_INTERVAL_4HOUR)
+                symbol=self.TRADE_SYMBOL, interval=self.time_scale)
             return candless
 
     def get_triple_ma(self, close=None):
@@ -304,7 +684,6 @@ class StreamlitView():
         ! RETURN False hiçbirşey yapma sinyali
         ! Closes Golden cross bulmak için kullanılır. Her coinin kapanislari aynı olmadığından dolayı kapanislar dışarıdan verilir.
         ! print_signal parametresi Golden cross ararken ekrana boş yere sinyal yazılmasın diye konulmuştur.
-
         """
         self.control_key_in_gi(indicator_name)
 
@@ -329,10 +708,10 @@ class StreamlitView():
 
         elif indicator_name == "rsi":
             last_rsi = self.get_rsi[-1]
-            if last_rsi <= 45:
+            if last_rsi <= 20:
                 result = 1
 
-            elif last_rsi > 68:
+            elif last_rsi > 80:
                 result = 2
 
             else:
@@ -603,17 +982,7 @@ class StreamlitView():
         with col1:
             self.ask_symbol()
         with col2:
-            self.show_golden_crosses()
-
-    def run(self):
-        self.view_side_bar()
-        self.ask_symbol_and_golden_crosses()
-        self.show_chart("candlestick")
-        self.show_chart("supertrend")
-        self.show_chart("rsi")
-        self.show_chart("bband")
-        self.show_chart("ema")
-        self.show_chart("tripleMA")
+            self.show_will_be_taken()
 
     def find_golden_cross(self, liste=None):
         if liste is not None:
@@ -679,80 +1048,26 @@ class StreamlitView():
                         self.TRADE_SYMBOL = add_selectbox
                         self.get_candle_data()
 
-    def json(self):
-        data = [
-            {
-                "id": "0001",
-                "type": "donut",
-                "name": "Cake",
-                "ppu": 0.55,
-                "batters":
-                        {
-                            "batter":
-                            [
-                                {"id": "1001", "type": "Regular"},
-                                {"id": "1002", "type": "Chocolate"},
-                                {"id": "1003", "type": "Blueberry"},
-                                {"id": "1004", "type": "Devil's Food"}
-                            ]
-                        },
-                "topping":
-                [
-                                {"id": "5001", "type": "None"},
-                                {"id": "5002", "type": "Glazed"},
-                                {"id": "5005", "type": "Sugar"},
-                                {"id": "5007", "type": "Powdered Sugar"},
-                                {"id": "5006", "type": "Chocolate with Sprinkles"},
-                                {"id": "5003", "type": "Chocolate"},
-                                {"id": "5004", "type": "Maple"}
-                        ]
-            },
-            {
-                "id": "0002",
-                "type": "donut",
-                "name": "Raised",
-                "ppu": 0.55,
-                "batters":
-                        {
-                            "batter":
-                            [
-                                {"id": "1001", "type": "Regular"}
-                            ]
-                        },
-                "topping":
-                [
-                                {"id": "5001", "type": "None"},
-                                {"id": "5002", "type": "Glazed"},
-                                {"id": "5005", "type": "Sugar"},
-                                {"id": "5003", "type": "Chocolate"},
-                                {"id": "5004", "type": "Maple"}
-                        ]
-            },
-            {
-                "id": "0003",
-                "type": "donut",
-                "name": "Old Fashioned",
-                "ppu": 0.55,
-                "batters":
-                        {
-                            "batter":
-                            [
-                                {"id": "1001", "type": "Regular"},
-                                {"id": "1002", "type": "Chocolate"}
-                            ]
-                        },
-                "topping":
-                [
-                                {"id": "5001", "type": "None"},
-                                {"id": "5002", "type": "Glazed"},
-                                {"id": "5003", "type": "Chocolate"},
-                                {"id": "5004", "type": "Maple"}
-                        ]
-            }
-        ]
-        st.write(data)
+    def show_will_be_taken(self):
+        if len(self.will_be_taken) > 0:
+            add_selectbox = st.selectbox("Alım sinyali üretenler",options=self.will_be_taken)
+            self.TRADE_SYMBOL = add_selectbox
+            self.get_candle_data()
+
+    def run(self):
+        self.view_side_bar()
+        self.ask_symbol_and_golden_crosses()
+        self.show_chart("candlestick")
+        self.show_chart("supertrend")
+        self.show_chart("rsi")
+        self.show_chart("bband")
+        self.show_chart("ema")
+        self.show_chart("tripleMA")
 
 
 if __name__ == "__main__":
-    stLit = StreamlitView()
+    time_scale = "15m"
+    explore = ExploreMarket(time_scale=time_scale)
+    find_will_be_taken = explore.analyze_coins()
+    stLit = StreamlitView(time_scale=time_scale,will_be_taken=find_will_be_taken)
     stLit.run()
